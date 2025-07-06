@@ -81,7 +81,6 @@
 /* Lots of globals, but mostly for the status UI and other things where it
    really makes no sense to haul them around as function parameters. */
 
-
 EXP_ST u8 *in_dir,                    /* Input directory with test cases  */
           *out_file,                  /* File to fuzz, if any             */
           *out_dir,                   /* Working & output directory       */
@@ -93,6 +92,7 @@ EXP_ST u8 *in_dir,                    /* Input directory with test cases  */
           *target_path,               /* Path to target binary            */
           *orig_cmdline,              /* Original command line            */
           *input_model_file,          /* Input model file                 */
+          *parser_path,               /* File format parser               */
           *file_extension;            /* Extension of .cur_input          */
 
 EXP_ST u32 exec_tmout = EXEC_TIMEOUT; /* Configurable exec timeout (ms)   */
@@ -256,7 +256,8 @@ struct queue_entry {
       var_behavior,                   /* Variable behavior?               */
       favored,                        /* Currently favored?               */
       fs_redundant,                   /* Marked as redundant in the fs?   */
-      parsed;                         /* Has parsing been attempted?      */
+      parsed,                         /* Has parsing been attempted?      */
+      endianness;                     /* Endianness for non-chunked files */
 
   u32 bitmap_size,                    /* Number of bits set in bitmap     */
       exec_cksum;                     /* Checksum of the execution trace  */
@@ -872,16 +873,26 @@ static void update_input_structure(u8* fname, struct queue_entry* q) {
       ifname = alloc_printf("-inputFilePath=%s", fname);
       ofname = alloc_printf("-outputFilePath=%s/chunks/%s.repaired", out_dir,
                             basename(fname));
-      execlp("peach", "peach", "-1", ifname, ofname, input_model_file, (char*) NULL);
+      execlp(parser_path, parser_path, "-1", ifname, ofname, input_model_file, (char*) NULL);
       exit(1); /* Stop the child process upon failure. */
     } else {
       close(pipefd[1]);
       output = fdopen(pipefd[0], "r");
 
+      FILE *pfd = fopen("/src/aflsmart/peach.output", "w");
+      q->endianness = AFL_UNKNOWN_ENDIAN;
       while (fgets(line, sizeof(line), output)) {
+	fprintf(pfd, "%s", line);
         /* Extract validity percentage and update the current queue entry. */
         q->validity = 0;
-        if (!strncmp(line, "ok", 2)) {
+        if (!strncmp(line, "endian ", 7)) {
+          if (!strncmp(line + 7, "little", 6))
+	    q->endianness = AFL_LITTLE_ENDIAN;
+	  else if (!strncmp(line + 7, "big", 3))
+	    q->endianness = AFL_BIG_ENDIAN;
+          else
+            FATAL("Output line indicating endianness is formatted incorrectly");
+	} else if (!strncmp(line, "ok", 2)) {
           q->validity = 100;
           break;
         } else if (!strncmp(line, "error", 5)) {
@@ -896,6 +907,7 @@ static void update_input_structure(u8* fname, struct queue_entry* q) {
           break;
         }
       }
+      fclose(pfd);
 
       waitpid(pid, &status, 0);
 
@@ -930,8 +942,9 @@ void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   q->len          = len;
   q->depth        = cur_depth + 1;
   q->passed_det   = passed_det;
-  q->validity     = 0;                /* Default validity is 0. */
-  q->parsed       = 0;                /* Structure parsing not attempted. */
+  q->validity     = 0;                  /* Default validity is 0. */
+  q->parsed       = 0;                  /* Structure parsing not attempted. */
+  q->endianness   = AFL_UNKNOWN_ENDIAN;
   q->chunk = NULL;
   q->cached_chunk = NULL;
 
@@ -5245,19 +5258,27 @@ void linearize_chunks(struct chunk *c, struct chunk ***first_chunks_arr,
 
 struct chunk *copy_children_with_new_offset(int new_start_byte,
                                             int old_start_byte,
+                                            int old_end_byte,
                                             struct chunk *c) {
   struct chunk *sibling = c;
   struct chunk *ret = NULL;
 
   while (sibling) {
     struct chunk *children = copy_children_with_new_offset(
-        new_start_byte, old_start_byte, sibling->children);
+        new_start_byte, old_start_byte, old_end_byte, sibling->children);
 
     struct chunk *new = (struct chunk *)malloc(sizeof(struct chunk));
     new->id = sibling->id;
     new->type = sibling->type;
     new->start_byte = (sibling->start_byte - old_start_byte) + new_start_byte;
     new->end_byte = (sibling->end_byte - old_start_byte) + new_start_byte;
+    if (has_referrer(sibling) && sibling->referrer >= old_start_byte
+                              && sibling->referrer < old_end_byte) {
+      new->referrer = sibling->referrer + (new_start_byte - old_start_byte);
+      /* Adjust the pointers in memory */
+    } else
+      new->referrer = NO_REFERRER;
+    new->entry_count = sibling->entry_count;
     new->modifiable = sibling->modifiable;
     new->next = ret;
     new->children = children;
@@ -5456,12 +5477,25 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
         if (smart_log_mode) {
           smart_log("BEFORE DELETION:\n");
           if (model_type == MODEL_PEACH)
-            smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
+            smart_log_tree(current_queue_entry->chunk);
+            //smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
 
           smart_log("DELETED CHUNK:\n");
-          smart_log("Type: %d Start: %d End: %d Modifiable: %d\n",
+          char referrer_string[20], entries_string[20];
+          if (!has_referrer(chunk_to_delete))
+            referrer_string[0] = '\0';
+          else
+            snprintf(referrer_string, sizeof(referrer_string),
+                            " Referrer: %d", chunk_to_delete->referrer);
+          if (!has_entry_count(chunk_to_delete))
+            entries_string[0] = '\0';
+          else
+            snprintf(entries_string, sizeof(entries_string),
+                            " Entries: %d", chunk_to_delete->entry_count);
+          smart_log("Type: %d Start: %d End: %d Modifiable: %d%s%s\n",
                     chunk_to_delete->type, chunk_to_delete->start_byte,
-                    chunk_to_delete->end_byte, chunk_to_delete->modifiable);
+                    chunk_to_delete->end_byte, chunk_to_delete->modifiable,
+                    referrer_string, entries_string);
           if (model_type == MODEL_PEACH)
             smart_log_n_hex(del_len, (*out_buf) + del_from);
         }
@@ -5469,14 +5503,26 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
         memmove((*out_buf) + del_from, (*out_buf) + del_from + del_len,
                 (*temp_len) - del_from - del_len + 1);
         (*temp_len) -= del_len;
+
+        /* Update entry_count and referrer fields */
+        struct chunk *chunk_to_delete_parent = get_parent(
+                        current_queue_entry->chunk, chunk_to_delete);
+        adjust_entry_count(current_queue_entry->chunk, chunk_to_delete_parent,
+                           chunk_to_delete, -1, *out_buf,
+                           current_queue_entry->endianness);
+        remove_referrers(current_queue_entry->chunk, del_from,
+                         del_from + del_len);
+
         current_queue_entry->chunk = search_and_destroy_chunk(
-            current_queue_entry->chunk, chunk_to_delete, del_from, del_len);
+            current_queue_entry->chunk, chunk_to_delete, del_from, del_len,
+            *out_buf, current_queue_entry->endianness);
         changed_structure = 1;
 
         if (smart_log_mode) {
           smart_log("AFTER DELETION:\n");
           if (model_type == MODEL_PEACH)
-            smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
+            smart_log_tree(current_queue_entry->chunk);
+            //smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
         }
       }
       break;
@@ -5620,19 +5666,43 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
             if (smart_log_mode) {
               smart_log("BEFORE SPLICING:\n");
               if (model_type == MODEL_PEACH)
-                smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
+                smart_log_tree(current_queue_entry->chunk);
+                //smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
 
               smart_log("TARGET CHUNK:\n");
-              smart_log("Type: %d Start: %d End: %d Modifiable: %d\n",
+              char referrer_string[20], entries_string[20];
+              if (!has_referrer(target_chunk))
+                referrer_string[0] = '\0';
+              else
+                snprintf(referrer_string, sizeof(referrer_string),
+				" Referrer: %d", target_chunk->referrer);
+              if (!has_entry_count(target_chunk))
+                entries_string[0] = '\0';
+              else
+                snprintf(entries_string, sizeof(entries_string),
+				" Entries: %d", target_chunk->entry_count);
+              smart_log("Type: %d Start: %d End: %d Modifiable: %d%s%s\n",
                         target_chunk->type, target_chunk->start_byte,
-                        target_chunk->end_byte, target_chunk->modifiable);
+                        target_chunk->end_byte, target_chunk->modifiable,
+                        referrer_string, entries_string);
               if (model_type == MODEL_PEACH)
                 smart_log_n_hex(target_len, (*out_buf) + target_start_byte);
 
               smart_log("SOURCE CHUNK:\n");
-              smart_log("Type: %d Start: %d End: %d Modifiable: %d\n",
+              if (!has_referrer(source->chunk))
+                referrer_string[0] = '\0';
+              else
+                snprintf(referrer_string, sizeof(referrer_string),
+				" Referrer: %d", source->chunk->referrer);
+              if (!has_entry_count(source->chunk))
+                entries_string[0] = '\0';
+              else
+                snprintf(entries_string, sizeof(entries_string),
+				" Entries: %d", source->chunk->entry_count);
+              smart_log("Type: %d Start: %d End: %d Modifiable: %d%s%s\n",
                 source->chunk->type, source->chunk->start_byte,
-                source->chunk->end_byte, source->chunk->modifiable);
+                source->chunk->end_byte, source->chunk->modifiable,
+                referrer_string, entries_string);
               if (model_type == MODEL_PEACH)
                 smart_log_n_hex(source_len, source_buf + source_start_byte);
             }
@@ -5650,17 +5720,24 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
             unsigned long target_id = target_chunk->id;
             delete_chunks(target_chunk->children);
             target_chunk->children = NULL;
+            remove_referrers(current_queue_entry->chunk, target_start_byte,
+                             target_start_byte + target_len);
             reduce_byte_positions(current_queue_entry->chunk, target_start_byte,
-                                  move_amount);
+                                  move_amount, *out_buf,
+                                  current_queue_entry->endianness);
 
+            int target_referrer = target_chunk->referrer;
+            int target_entry_count = target_chunk->entry_count;
             memcpy(target_chunk, source->chunk, sizeof(struct chunk));
             target_chunk->id = target_id;
             target_chunk->start_byte = target_start_byte;
             target_chunk->end_byte = target_start_byte + source_len - 1;
+            target_chunk->referrer = target_referrer;
+            target_chunk->entry_count = target_entry_count;
             target_chunk->next = target_next;
             target_chunk->children = copy_children_with_new_offset(
                 target_start_byte, source->chunk->start_byte,
-                source->chunk->children);
+                source->chunk->end_byte, source->chunk->children);
             changed_structure = 1;
 
             /* The source buffer is no longer needed */
@@ -5669,7 +5746,8 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
             if (smart_log_mode) {
               smart_log("AFTER SPLICING:\n");
               if (model_type == MODEL_PEACH)
-                smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
+                smart_log_tree(current_queue_entry->chunk);
+                //smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
             }
           }
         }
@@ -5828,7 +5906,8 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
               if (smart_log_mode) {
                 smart_log("BEFORE ADOPTING:\n");
                 if (model_type == MODEL_PEACH)
-                  smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
+                  smart_log_tree(current_queue_entry->chunk);
+                  //smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
                 
                 smart_log("SOURCE CHUNK:\n");
                 if (model_type == MODEL_PEACH)
@@ -5850,10 +5929,14 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
 
               int target_parent_end_byte = target_parent_chunk->end_byte;
 
-              /* Update the chunks */
+              adjust_entry_count(current_queue_entry->chunk,
+                                 target_parent_chunk, source_child_chunk,
+                                 1, *out_buf, current_queue_entry->endianness);
+              /* Update the chunks and referrers in memory */
               increase_byte_positions_except_target_children(
                   current_queue_entry->chunk, target_parent_chunk,
-                  target_start_byte, source_child_chunk_size);
+                  target_start_byte, source_child_chunk_size, *out_buf,
+                  current_queue_entry->endianness);
 
               /* Create new chunk node */
               struct chunk *new_child_chunk =
@@ -5863,11 +5946,13 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
               new_child_chunk->start_byte = target_parent_end_byte + 1;
               new_child_chunk->end_byte =
                   target_parent_end_byte + source_child_chunk_size;
+              new_child_chunk->referrer = NO_REFERRER;
+              new_child_chunk->entry_count = NO_ENTRY_COUNT;
               new_child_chunk->modifiable = source_child_chunk->modifiable;
               new_child_chunk->next = target_parent_chunk->children;
               new_child_chunk->children = copy_children_with_new_offset(
                   new_child_chunk->start_byte, source_child_chunk->start_byte,
-                  source_child_chunk->children);
+                  source_child_chunk->end_byte, source_child_chunk->children);
               target_parent_chunk->children = new_child_chunk;
 
               /* Flag that we have changed the structure */
@@ -5879,7 +5964,8 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
               if (smart_log_mode) {
                 smart_log("AFTER ADOPTING:\n");
                 if (model_type == MODEL_PEACH)
-                  smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
+                  smart_log_tree(current_queue_entry->chunk);
+                  //smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
               }
             }
           }
@@ -8810,7 +8896,7 @@ int main(int argc, char **argv) {
   gettimeofday(&tv, &tz);
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
-  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Qw:g:lhH:e:c")) > 0)
+  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Qw:g:lhH:e:cP:")) > 0)
 
     switch (opt) {
 
@@ -9044,20 +9130,34 @@ int main(int argc, char **argv) {
 
         break;
 
+      case 'P':
+
+        if (parser_path) FATAL("Multiple -P options not supported");
+        parser_path = optarg;
+
+        if (!program_exist(parser_path)) {
+          FATAL("%s cannot be found. Please make sure to provide a valid parser.", parser_path);
+        }
+
+        break;
+
       default:
 
         usage(argv[0]);
 
     }
 
+  if (!parser_path)
+    parser_path = "peach";
+
   if (stacking_mutation_mode && !smart_mode)
-      FATAL("Mixed mode (-h) requires smart fuzzing enabled (-w)");
+    FATAL("Mixed mode (-h) requires smart fuzzing enabled (-w)");
 
   if (smart_mutation_limit && !smart_mode)
-      FATAL("Smart mutations limit (-H) requires smart fuzzing enabled (-w)");
+    FATAL("Smart mutations limit (-H) requires smart fuzzing enabled (-w)");
 
   if (input_model_file && (!smart_mode || model_type != MODEL_PEACH))
-      FATAL("Input model file (-g) is only for smart fuzzing using peach (-w peach)");
+    FATAL("Input model file (-g) is only for smart fuzzing using peach (-w peach)");
 
   if (optind == argc || !in_dir || !out_dir) usage(argv[0]);
 
