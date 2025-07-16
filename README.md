@@ -110,9 +110,13 @@ AFLSmart adds four more options to AFL
 
 -H: limit the number of higher-order mutations for each input. This is an optional option; there is no limit if the option is not set.
 
+TIFF extension:
+
+-P: specify the path to a custom input file parser that is to be used instead of Peach.
+
 Example command: 
 ```bash
-afl-fuzz -h -i in -o out -w peach -g <input model file> -x <dictionary file> <executable binary and its arguments> @@
+afl-fuzz -h -i in -o out -w peach -g <input model file> -P parse_tiff_chunks.py -x <dictionary file> <executable binary and its arguments> @@
 ```
 
 During the fuzzing process, AFLSmart will interact with Peach to get the validity and chunks' boundary information. Please check the out/chunks folder and make sure that it is not empty. If it is empty, Peach executable may not be found and you need to compile Peach and/or check the PATH environment variable.
@@ -160,3 +164,4 @@ AFLSmart is licensed under [Apache License, Version 2.0](https://www.apache.org/
 AFLSmart is an extension of [American Fuzzy Lop](http://lcamtuf.coredump.cx/afl/) written and maintained by Michał Zalewski <<lcamtuf@google.com>>, and builds upon the [Peach Fuzzer Community Edition](http://www.peach.tech/resources/peachcommunity/) written and maintained by [PeachTech](https://www.peach.tech/). We thank PeachTech for making the community version open source.
 * **AFL**: [Copyright](https://github.com/aflsmart/aflsmart/blob/master/docs/README) 2013, 2014, 2015, 2016 Google Inc. All rights reserved. Released under terms and conditions of [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 * **Peach**: Peach is *not* distributed with this repository. Instead, we ask to download [here](https://sourceforge.net/projects/peachfuzz/files/Peach/3.0/). The Peach Fuzzer Community Edition is [licenced](http://community.peachfuzzer.com/License.html) under the [MIT License](http://en.wikipedia.org/wiki/Mit_license)
+* **ExampleTiffs**: The example TIFF files in testcases/aflsmart/tiff are licensed under various licenses. For details see the original [GitHub repository](https://github.com/tlnagy/exampletiffs) we took them from.
