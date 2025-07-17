@@ -363,20 +363,6 @@ struct chunk *copy_chunks(struct chunk *node) {
 
 // write num into mem at corresponding address with correct endianness
 void write_int_to_mem(int num, char *mem, int addr, char endian, int bytes) {
-  /*
-  // check system's endianness
-  char system_endian;
-  unsigned int one = 1;
-  if (*(unsigned char *)&one)
-    system_endian = AFL_LITTLE_ENDIAN;
-  else
-    system_endian = AFL_BIG_ENDIAN;
-
-  // swap the endianness if it's not the one we want
-  if (endian != system_endian)
-    num = (num << 24 & 0xff000000) | (num << 8 & 0x00ff0000)
-           | (num >> 8 & 0x0000ff00) | (num >> 24 & 0x000000ff);
-  */
   if (endian == AFL_UNKNOWN_ENDIAN || (bytes != 2 && bytes != 4))
     return;
 
@@ -433,16 +419,6 @@ void adjust_entry_count(struct chunk *c, struct chunk *parent,
   };
 
   if (ec_chunk) {
-    /*
-    fprintf("Adjusting entry_count by %d!\n", amount);
-    fprintf("BEFORE 1\n");
-    print_tree(parent);
-    fprintf("AFTER 1\n");
-    fprintf("BEFORE 2\n");
-    print_tree(parent);
-    fprintf("AFTER 2\n");
-    print_tree(target);
-    */
     ec_chunk->entry_count += amount;
     write_int_to_mem(ec_chunk->entry_count, out_buf,
                      ec_chunk->start_byte, endian, 2);
@@ -450,7 +426,6 @@ void adjust_entry_count(struct chunk *c, struct chunk *parent,
 }
 
 void remove_referrers(struct chunk *c, int start, int end) {
-  //smart_log("Called remove_referrers from %d to %d\n", start, end);
   struct chunk *sibling = c;
 
   while (sibling) {
@@ -464,7 +439,6 @@ void remove_referrers(struct chunk *c, int start, int end) {
 
 void reduce_byte_positions(struct chunk *c, int start_byte,
                            unsigned size, char *out_buf, char endian) {
-  //smart_log("Called reduce_byte_positions from %d to %d\n", start_byte, start_byte + size);
   struct chunk *sibling = c;
 
   while (sibling) {
@@ -475,7 +449,6 @@ void reduce_byte_positions(struct chunk *c, int start_byte,
 
     if (sibling->start_byte >= 0 && sibling->start_byte > start_byte) {
       (sibling->start_byte) -= size;
-      //smart_log("rbp start from %d to %d\n", sibling->start_byte + size, sibling->start_byte);
       if (has_referrer(sibling)) {
         write_int_to_mem(sibling->start_byte, out_buf,
                          sibling->referrer, endian, 4);
@@ -494,7 +467,6 @@ void reduce_byte_positions(struct chunk *c, int start_byte,
 void increase_byte_positions_except_target_children(struct chunk *c,
                                     struct chunk *target, int start_byte,
                                     unsigned size, char *out_buf, char endian) {
-  //smart_log("Called increase_byte_positions_except_target_children from %d to %d\n", start_byte, start_byte + size);
   struct chunk *sibling = c;
 
   while (sibling) {
@@ -505,7 +477,6 @@ void increase_byte_positions_except_target_children(struct chunk *c,
 
     if (sibling->start_byte >= 0 && sibling->start_byte > start_byte) {
       (sibling->start_byte) += size;
-      //smart_log("ibpetc start from %d to %d\n", sibling->start_byte - size, sibling->start_byte);
       if (has_referrer(sibling)) {
         write_int_to_mem(sibling->start_byte, out_buf,
                          sibling->referrer, endian, 4);
@@ -529,7 +500,6 @@ struct chunk *search_and_destroy_chunk(struct chunk *c,
                                        struct chunk *target_chunk,
                                        int start_byte, unsigned size,
                                        char *out_buf, char endian) {
-  //smart_log("Called search_and_destroy_chunk from %d to %d\n", start_byte, start_byte + size);
   struct chunk *sibling = c;
   struct chunk *ret = c;
   struct chunk *prev = NULL;
@@ -537,7 +507,6 @@ struct chunk *search_and_destroy_chunk(struct chunk *c,
   while (sibling) {
 
     if (sibling == target_chunk) {
-      //smart_log("got sibling == target_chunk == %p\n", sibling);
       struct chunk *tmp = sibling->next;
 
       if (ret == sibling)
@@ -548,14 +517,11 @@ struct chunk *search_and_destroy_chunk(struct chunk *c,
       delete_chunks(sibling->children);
       free(sibling);
 
-      //smart_log("doing rbp from %d to %d\n", start_byte, start_byte + size);
+      // This original line of code was wrong
       //reduce_byte_positions(tmp, start_byte, size, out_buf, endian);
       sibling = tmp;
       continue;
     }
-
-    //if (sibling->start_byte > start_byte && sibling->start_byte < start_byte + size)
-    //  smart_log_tree(c);
 
     if (has_referrer(sibling) && sibling->referrer >= start_byte) {
       sibling->referrer -= size;
@@ -563,7 +529,6 @@ struct chunk *search_and_destroy_chunk(struct chunk *c,
 
     if (sibling->start_byte >= 0 && sibling->start_byte > start_byte) {
       (sibling->start_byte) -= size;
-      //smart_log("sadc start from %d to %d\n", sibling->start_byte + size, sibling->start_byte);
       if (has_referrer(sibling)) {
         write_int_to_mem(sibling->start_byte, out_buf,
                          sibling->referrer, endian, 4);

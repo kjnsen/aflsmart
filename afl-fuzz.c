@@ -879,10 +879,8 @@ static void update_input_structure(u8* fname, struct queue_entry* q) {
       close(pipefd[1]);
       output = fdopen(pipefd[0], "r");
 
-      FILE *pfd = fopen("/src/aflsmart/peach.output", "w");
       q->endianness = AFL_UNKNOWN_ENDIAN;
       while (fgets(line, sizeof(line), output)) {
-	fprintf(pfd, "%s", line);
         /* Extract validity percentage and update the current queue entry. */
         q->validity = 0;
         if (!strncmp(line, "endian ", 7)) {
@@ -907,7 +905,6 @@ static void update_input_structure(u8* fname, struct queue_entry* q) {
           break;
         }
       }
-      fclose(pfd);
 
       waitpid(pid, &status, 0);
 
@@ -5275,7 +5272,6 @@ struct chunk *copy_children_with_new_offset(int new_start_byte,
     if (has_referrer(sibling) && sibling->referrer >= old_start_byte
                               && sibling->referrer < old_end_byte) {
       new->referrer = sibling->referrer + (new_start_byte - old_start_byte);
-      /* Adjust the pointers in memory */
     } else
       new->referrer = NO_REFERRER;
     new->entry_count = sibling->entry_count;
@@ -5477,8 +5473,7 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
         if (smart_log_mode) {
           smart_log("BEFORE DELETION:\n");
           if (model_type == MODEL_PEACH)
-            smart_log_tree(current_queue_entry->chunk);
-            //smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
+            smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
 
           smart_log("DELETED CHUNK:\n");
           char referrer_string[20], entries_string[20];
@@ -5521,8 +5516,7 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
         if (smart_log_mode) {
           smart_log("AFTER DELETION:\n");
           if (model_type == MODEL_PEACH)
-            smart_log_tree(current_queue_entry->chunk);
-            //smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
+            smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
         }
       }
       break;
@@ -5666,8 +5660,7 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
             if (smart_log_mode) {
               smart_log("BEFORE SPLICING:\n");
               if (model_type == MODEL_PEACH)
-                smart_log_tree(current_queue_entry->chunk);
-                //smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
+                smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
 
               smart_log("TARGET CHUNK:\n");
               char referrer_string[20], entries_string[20];
@@ -5746,8 +5739,7 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
             if (smart_log_mode) {
               smart_log("AFTER SPLICING:\n");
               if (model_type == MODEL_PEACH)
-                smart_log_tree(current_queue_entry->chunk);
-                //smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
+                smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
             }
           }
         }
@@ -5906,8 +5898,7 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
               if (smart_log_mode) {
                 smart_log("BEFORE ADOPTING:\n");
                 if (model_type == MODEL_PEACH)
-                  smart_log_tree(current_queue_entry->chunk);
-                  //smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
+                  smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
                 
                 smart_log("SOURCE CHUNK:\n");
                 if (model_type == MODEL_PEACH)
@@ -5964,8 +5955,7 @@ u8 higher_order_fuzzing(struct queue_entry *current_queue_entry, s32 *temp_len,
               if (smart_log_mode) {
                 smart_log("AFTER ADOPTING:\n");
                 if (model_type == MODEL_PEACH)
-                  smart_log_tree(current_queue_entry->chunk);
-                  //smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
+                  smart_log_tree_with_data_hex(current_queue_entry->chunk, (*out_buf));
               }
             }
           }

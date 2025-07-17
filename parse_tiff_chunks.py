@@ -213,7 +213,6 @@ def parse_dir_entry(offset, ifd_offset, curname):
 
         # parse value
         value_size = type_size * count
-        print(f"{offset}-{offset + 11}: tag:", tag, "type:", entry_type, "count:", count, "value:", int_at(offset + 8, 4))
         if value_size <= 4:
             curname = curname + "~Value"
             add_chunk(offset + 8, offset + 12, curname, True)
@@ -465,6 +464,5 @@ outfile = open(args.outputFilePath + ".chunks", "w")
 write_chunks_to_file(outfile)
 outfile.close()
 
-#print("Coverage", coverage, "len", len(data))
 print("endian", endian)
 get_validity()
